@@ -29,7 +29,7 @@ class ScreenerScraper:
         })
         
         self.wait = WebDriverWait(self.driver, 15)
-        
+    
     def login(self, email, password):
         try:
             print("Visiting home page to establish session...")
@@ -191,133 +191,237 @@ class ScreenerScraper:
             self.driver.save_screenshot("login_exception.png")
             return False
     
-    def scrape_results_page(self, url=None):
+    def get_company_links_from_page(self):
+        """Extract company links from current page"""
         try:
-            if url:
-                self.driver.get(url)
+            company_links = []
             
-            time.sleep(3)
+            # Based on the HTML structure, company links are in flex-row containers
+            # Look for the specific structure: div.flex-row -> a[href*='/company/']
+            company_containers = self.driver.find_elements(By.CSS_SELECTOR, ".flex-row.flex-space-between.flex-align-center")
             
-            print(f"Scraping page: {self.driver.current_url}")
+            print(f"Found {len(company_containers)} company containers")
             
-            table_selectors = [
-                "table",
-                ".data-table table",
-                "#results-table",
-                "[data-table]"
+            for container in company_containers:
+                try:
+                    # Find the company link within each container
+                    company_link = container.find_element(By.CSS_SELECTOR, "a[href*='/company/']")
+                    
+                    href = company_link.get_attribute('href')
+                    company_name = company_link.find_element(By.CSS_SELECTOR, ".hover-link.ink-900").text.strip()
+                    
+                    # Skip PDF links and invalid entries
+                    if (href and '/company/' in href and company_name and 
+                        company_name.upper() != 'PDF' and 
+                        '/source/quarter/' not in href and
+                        company_name != ''):
+                        
+                        # Extract symbol - handle different URL formats
+                        url_parts = href.split('/company/')[1].split('/')
+                        if len(url_parts) >= 2 and url_parts[0] == 'id':
+                            # Handle format like /company/id/2862/
+                            symbol = f"id/{url_parts[1]}"
+                        else:
+                            # Handle normal format like /company/SYMBOL/
+                            symbol = url_parts[0]
+                        
+                        # Skip only if it's a source URL (not legitimate company URLs)
+                        if symbol != 'source' and not href.endswith('/source/quarter/'):
+                            company_data = {
+                                'name': company_name,
+                                'url': href,
+                                'symbol': symbol
+                            }
+                            company_links.append(company_data)
+                            
+                            # Print company name in real-time
+                            print(f"  -> {company_name} ({symbol})")
+                            
+                except Exception as e:
+                    # Some containers might not have company links (could be headers, etc.)
+                    continue
+            
+            print(f"Extracted {len(company_links)} company links from current page")
+            return company_links
+            
+        except Exception as e:
+            print(f"Error getting company links: {e}")
+            return []
+    
+    def get_total_pages(self):
+        """Get total number of pages from pagination"""
+        try:
+            # Look for pagination section with specific structure
+            pagination_selectors = [
+                ".paginator a",
+                "p.paginator a",
+                ".end"
             ]
             
-            table = None
-            for selector in table_selectors:
+            max_page = 1
+            
+            # First try to find the "end" link which should be the last page
+            try:
+                end_link = self.driver.find_element(By.CSS_SELECTOR, "a.end")
+                href = end_link.get_attribute('href')
+                if href and 'p=' in href:
+                    page_num = int(href.split('p=')[1].split('&')[0])
+                    max_page = page_num
+                    print(f"Found end link with page: {max_page}")
+                    return max_page
+            except:
+                pass
+            
+            # Fallback to checking all pagination links
+            for selector in pagination_selectors:
                 try:
-                    table = self.driver.find_element(By.CSS_SELECTOR, selector)
-                    if table:
-                        print(f"Found table with selector: {selector}")
+                    page_links = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                    for link in page_links:
+                        href = link.get_attribute('href')
+                        if href and 'p=' in href:
+                            try:
+                                page_num = int(href.split('p=')[1].split('&')[0])
+                                max_page = max(max_page, page_num)
+                            except:
+                                pass
+                        
+                        # Also check link text for numbers
+                        text = link.text.strip()
+                        if text.isdigit():
+                            max_page = max(max_page, int(text))
+                    
+                    if max_page > 1:
                         break
                 except:
                     continue
             
-            if not table:
-                print("No table found. Page title:", self.driver.title)
-                print("Current URL:", self.driver.current_url)
-                possible_containers = self.driver.find_elements(By.CSS_SELECTOR, 
-                    ".results, .data, .table-container, .content, main")
-                
-                if possible_containers:
-                    print(f"Found {len(possible_containers)} possible data containers")
-                    print("Sample content:", possible_containers[0].text[:200])
-                
-                return None, None
-            
-            headers = []
+            # Check for results count text like "4490 results"
             try:
-                header_elements = table.find_elements(By.CSS_SELECTOR, "thead tr th, thead tr td, tr:first-child th, tr:first-child td")
-                for header in header_elements:
-                    text = header.text.strip()
-                    if text:
-                        headers.append(text)
+                results_text = self.driver.find_element(By.CSS_SELECTOR, ".paginator").text
+                if "results" in results_text.lower():
+                    # Extract total results and estimate pages (assuming 25 per page)
+                    import re
+                    numbers = re.findall(r'\d+', results_text)
+                    if numbers:
+                        total_results = int(numbers[-1])  # Last number should be total results
+                        estimated_pages = (total_results + 24) // 25  # Round up division
+                        max_page = max(max_page, estimated_pages)
+                        print(f"Found {total_results} total results, estimated {estimated_pages} pages")
             except:
-                print("Could not find table headers")
+                pass
             
-            rows_data = []
+            print(f"Detected maximum page: {max_page}")
+            return max_page
+            
+        except Exception as e:
+            print(f"Error getting total pages: {e}")
+            return 1
+    
+    def navigate_to_page(self, page_num):
+        """Navigate to specific page number"""
+        try:
+            current_url = self.driver.current_url
+            
+            # Remove existing page parameter if present
+            if '?p=' in current_url:
+                base_url = current_url.split('?p=')[0]
+            elif '&p=' in current_url:
+                base_url = current_url.split('&p=')[0]
+            else:
+                base_url = current_url
+            
+            # Add page parameter
+            if '?' in base_url:
+                new_url = f"{base_url}&p={page_num}"
+            else:
+                new_url = f"{base_url}?p={page_num}"
+            
+            print(f"Navigating to page {page_num}: {new_url}")
+            self.driver.get(new_url)
+            time.sleep(3)
+            
+            # Verify we're on the right page
             try:
-                row_selectors = ["tbody tr", "tr"]
-                rows = []
+                current_page_element = self.driver.find_element(By.CSS_SELECTOR, ".this-page")
+                current_page = int(current_page_element.text.strip())
+                if current_page == page_num:
+                    print(f"Successfully navigated to page {page_num}")
+                    return True
+                else:
+                    print(f"Page mismatch: expected {page_num}, got {current_page}")
+                    return False
+            except:
+                print(f"Could not verify page number, assuming navigation successful")
+                return True
+            
+        except Exception as e:
+            print(f"Error navigating to page {page_num}: {e}")
+            return False
+    
+    def get_all_company_links(self):
+        """Get all company links from all pages"""
+        try:
+            all_companies = []
+            
+            # Start from results page
+            print("Getting company links from all pages...")
+            
+            # Get total pages
+            total_pages = self.get_total_pages()
+            print(f"Total pages to scrape: {total_pages}")
+            
+            # Scrape each page
+            for page_num in range(1, total_pages + 1):
+                print(f"\n--- Scraping page {page_num}/{total_pages} ---")
                 
-                for selector in row_selectors:
-                    try:
-                        rows = table.find_elements(By.CSS_SELECTOR, selector)
-                        if rows:
-                            if selector == "tr" and headers:
-                                rows = rows[1:]
-                            break
-                    except:
+                if page_num > 1:
+                    if not self.navigate_to_page(page_num):
+                        print(f"Failed to navigate to page {page_num}, skipping...")
                         continue
                 
-                for row in rows:
-                    row_data = []
-                    cells = row.find_elements(By.TAG_NAME, "td")
-                    if not cells:
-                        cells = row.find_elements(By.TAG_NAME, "th")
-                    
-                    for cell in cells:
-                        text = cell.text.strip()
-                        if not text:
-                            links = cell.find_elements(By.TAG_NAME, "a")
-                            if links:
-                                text = links[0].text.strip()
-                        row_data.append(text)
-                    
-                    if row_data and any(cell for cell in row_data):
-                        rows_data.append(row_data)
-                        
-            except Exception as e:
-                print(f"Error extracting table rows: {str(e)}")
+                # Wait for page to load
+                time.sleep(2)
+                
+                # Get companies from current page
+                print(f"Companies found on page {page_num}:")
+                page_companies = self.get_company_links_from_page()
+                
+                if page_companies:
+                    all_companies.extend(page_companies)
+                    print(f"✓ Page {page_num} complete. Total companies collected so far: {len(all_companies)}")
+                else:
+                    print(f"✗ No companies found on page {page_num}")
+                
+                # Add small delay between pages
+                time.sleep(1)
             
-            print(f"Extracted {len(rows_data)} rows with {len(headers)} headers")
-            return headers, rows_data
+            print(f"\n🎉 Completed! Total companies collected: {len(all_companies)}")
+            return all_companies
             
         except Exception as e:
-            print(f"Error scraping results: {str(e)}")
-            self.driver.save_screenshot("scraping_error.png")
-            return None, None
+            print(f"Error getting all company links: {e}")
+            return []
     
-    def save_to_csv(self, headers, data, filename):
+    def save_companies_to_csv(self, companies, filename="companies_list.csv"):
+        """Save company list to CSV"""
         try:
-            if headers and data:
-                max_cols = len(headers)
-                normalized_data = []
-                
-                for row in data:
-                    if len(row) < max_cols:
-                        padded_row = row + [''] * (max_cols - len(row))
-                    elif len(row) > max_cols:
-                        padded_row = row[:max_cols]
-                    else:
-                        padded_row = row
-                    
-                    normalized_data.append(padded_row)
-                
-                print(f"Normalized data: {len(normalized_data)} rows with {max_cols} columns each")
-                
-                df = pd.DataFrame(normalized_data, columns=headers)
+            if companies:
+                df = pd.DataFrame(companies)
                 df.to_csv(filename, index=False)
-                print(f"Data saved to {filename}")
+                print(f"Companies saved to {filename}")
+                
+                # Print some stats
+                print(f"Total companies: {len(companies)}")
+                print("\nFirst few companies:")
+                for i, company in enumerate(companies[:5]):
+                    print(f"{i+1}. {company['name']} - {company['symbol']}")
+                    
             else:
-                print("No data to save")
+                print("No companies to save")
                 
         except Exception as e:
-            print(f"Error saving to CSV: {e}")
-            try:
-                with open(f"raw_{filename}", 'w') as f:
-                    f.write(f"Headers: {headers}\n")
-                    f.write(f"Data rows: {len(data)}\n")
-                    for i, row in enumerate(data):
-                        f.write(f"Row {i}: {row}\n")
-                print(f"Raw data saved to raw_{filename}")
-            except:
-                print("Failed to save even raw data")
-    
+            print(f"Error saving companies: {e}")
+
     def check_login_status(self):
         try:
             current_url = self.driver.current_url
@@ -397,8 +501,6 @@ def main():
         print("Error: Please set SCREENER_EMAIL and SCREENER_PASSWORD environment variables.")
         return
 
-
-    
     scraper = ScreenerScraper()
     
     try:
@@ -407,7 +509,7 @@ def main():
         time.sleep(3)
         
         if scraper.check_login_status():
-            print("Already logged in! Proceeding to scrape data...")
+            print("Already logged in! Proceeding to get company list...")
             login_successful = True
         else:
             print("Not logged in. Going to login page...")
@@ -419,7 +521,7 @@ def main():
             login_successful = scraper.login(EMAIL, PASSWORD)
         
         if login_successful:
-            print("Ready to scrape data...")
+            print("Ready to get company list...")
             
             current_url = scraper.driver.current_url
             if "/results/latest/" not in current_url:
@@ -427,21 +529,15 @@ def main():
                 scraper.driver.get("https://www.screener.in/results/latest/")
                 time.sleep(3)
             
-            headers, data = scraper.scrape_results_page()
+            # Get all company links
+            companies = scraper.get_all_company_links()
             
-            if headers and data:
-                scraper.save_to_csv(headers, data, "screener_results.csv")
-                print(f"Successfully scraped {len(data)} rows of data")
-                
-                if data:
-                    print("\nFirst few rows:")
-                    print("Headers:", headers)
-                    for i, row in enumerate(data[:3]):
-                        print(f"Row {i+1}:", row)
+            if companies:
+                scraper.save_companies_to_csv(companies)
+                print(f"\nSuccessfully collected {len(companies)} companies!")
             else:
-                print("No data found. The page might not contain a data table.")
-                print("Taking screenshot for debugging...")
-                scraper.driver.save_screenshot("current_page.png")
+                print("No companies found. Taking screenshot for debugging...")
+                scraper.driver.save_screenshot("no_companies_found.png")
         else:
             print("\n=== LOGIN FAILED ===")
             print("Debugging the current page state...")

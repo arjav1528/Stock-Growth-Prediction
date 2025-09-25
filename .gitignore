@@ -1,2 +1,5 @@
 .env
 *.csv
+companies_list.csv
+quarterly_results.csv
+quarterly_error_screenshot.png
