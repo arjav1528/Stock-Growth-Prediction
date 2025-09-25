@@ -192,40 +192,31 @@ class ScreenerScraper:
             return False
     
     def get_company_links_from_page(self):
-        """Extract company links from current page"""
         try:
             company_links = []
             
-            # Based on the HTML structure, company links are in flex-row containers
-            # Look for the specific structure: div.flex-row -> a[href*='/company/']
             company_containers = self.driver.find_elements(By.CSS_SELECTOR, ".flex-row.flex-space-between.flex-align-center")
             
             print(f"Found {len(company_containers)} company containers")
             
             for container in company_containers:
                 try:
-                    # Find the company link within each container
                     company_link = container.find_element(By.CSS_SELECTOR, "a[href*='/company/']")
                     
                     href = company_link.get_attribute('href')
                     company_name = company_link.find_element(By.CSS_SELECTOR, ".hover-link.ink-900").text.strip()
                     
-                    # Skip PDF links and invalid entries
                     if (href and '/company/' in href and company_name and 
                         company_name.upper() != 'PDF' and 
                         '/source/quarter/' not in href and
                         company_name != ''):
                         
-                        # Extract symbol - handle different URL formats
                         url_parts = href.split('/company/')[1].split('/')
                         if len(url_parts) >= 2 and url_parts[0] == 'id':
-                            # Handle format like /company/id/2862/
                             symbol = f"id/{url_parts[1]}"
                         else:
-                            # Handle normal format like /company/SYMBOL/
                             symbol = url_parts[0]
                         
-                        # Skip only if it's a source URL (not legitimate company URLs)
                         if symbol != 'source' and not href.endswith('/source/quarter/'):
                             company_data = {
                                 'name': company_name,
@@ -234,11 +225,9 @@ class ScreenerScraper:
                             }
                             company_links.append(company_data)
                             
-                            # Print company name in real-time
                             print(f"  -> {company_name} ({symbol})")
                             
                 except Exception as e:
-                    # Some containers might not have company links (could be headers, etc.)
                     continue
             
             print(f"Extracted {len(company_links)} company links from current page")
@@ -249,9 +238,7 @@ class ScreenerScraper:
             return []
     
     def get_total_pages(self):
-        """Get total number of pages from pagination"""
         try:
-            # Look for pagination section with specific structure
             pagination_selectors = [
                 ".paginator a",
                 "p.paginator a",
@@ -260,7 +247,6 @@ class ScreenerScraper:
             
             max_page = 1
             
-            # First try to find the "end" link which should be the last page
             try:
                 end_link = self.driver.find_element(By.CSS_SELECTOR, "a.end")
                 href = end_link.get_attribute('href')
@@ -272,7 +258,6 @@ class ScreenerScraper:
             except:
                 pass
             
-            # Fallback to checking all pagination links
             for selector in pagination_selectors:
                 try:
                     page_links = self.driver.find_elements(By.CSS_SELECTOR, selector)
@@ -285,7 +270,6 @@ class ScreenerScraper:
                             except:
                                 pass
                         
-                        # Also check link text for numbers
                         text = link.text.strip()
                         if text.isdigit():
                             max_page = max(max_page, int(text))
@@ -295,16 +279,14 @@ class ScreenerScraper:
                 except:
                     continue
             
-            # Check for results count text like "4490 results"
             try:
                 results_text = self.driver.find_element(By.CSS_SELECTOR, ".paginator").text
                 if "results" in results_text.lower():
-                    # Extract total results and estimate pages (assuming 25 per page)
                     import re
                     numbers = re.findall(r'\d+', results_text)
                     if numbers:
-                        total_results = int(numbers[-1])  # Last number should be total results
-                        estimated_pages = (total_results + 24) // 25  # Round up division
+                        total_results = int(numbers[-1])
+                        estimated_pages = (total_results + 24) // 25
                         max_page = max(max_page, estimated_pages)
                         print(f"Found {total_results} total results, estimated {estimated_pages} pages")
             except:
@@ -318,11 +300,9 @@ class ScreenerScraper:
             return 1
     
     def navigate_to_page(self, page_num):
-        """Navigate to specific page number"""
         try:
             current_url = self.driver.current_url
             
-            # Remove existing page parameter if present
             if '?p=' in current_url:
                 base_url = current_url.split('?p=')[0]
             elif '&p=' in current_url:
@@ -330,7 +310,6 @@ class ScreenerScraper:
             else:
                 base_url = current_url
             
-            # Add page parameter
             if '?' in base_url:
                 new_url = f"{base_url}&p={page_num}"
             else:
@@ -340,7 +319,6 @@ class ScreenerScraper:
             self.driver.get(new_url)
             time.sleep(3)
             
-            # Verify we're on the right page
             try:
                 current_page_element = self.driver.find_element(By.CSS_SELECTOR, ".this-page")
                 current_page = int(current_page_element.text.strip())
@@ -359,18 +337,14 @@ class ScreenerScraper:
             return False
     
     def get_all_company_links(self):
-        """Get all company links from all pages"""
         try:
             all_companies = []
             
-            # Start from results page
             print("Getting company links from all pages...")
             
-            # Get total pages
             total_pages = self.get_total_pages()
             print(f"Total pages to scrape: {total_pages}")
             
-            # Scrape each page
             for page_num in range(1, total_pages + 1):
                 print(f"\n--- Scraping page {page_num}/{total_pages} ---")
                 
@@ -379,10 +353,8 @@ class ScreenerScraper:
                         print(f"Failed to navigate to page {page_num}, skipping...")
                         continue
                 
-                # Wait for page to load
                 time.sleep(2)
                 
-                # Get companies from current page
                 print(f"Companies found on page {page_num}:")
                 page_companies = self.get_company_links_from_page()
                 
@@ -392,7 +364,6 @@ class ScreenerScraper:
                 else:
                     print(f"✗ No companies found on page {page_num}")
                 
-                # Add small delay between pages
                 time.sleep(1)
             
             print(f"\n🎉 Completed! Total companies collected: {len(all_companies)}")
@@ -403,14 +374,12 @@ class ScreenerScraper:
             return []
     
     def save_companies_to_csv(self, companies, filename="companies_list.csv"):
-        """Save company list to CSV"""
         try:
             if companies:
                 df = pd.DataFrame(companies)
                 df.to_csv(filename, index=False)
                 print(f"Companies saved to {filename}")
                 
-                # Print some stats
                 print(f"Total companies: {len(companies)}")
                 print("\nFirst few companies:")
                 for i, company in enumerate(companies[:5]):
@@ -529,7 +498,6 @@ def main():
                 scraper.driver.get("https://www.screener.in/results/latest/")
                 time.sleep(3)
             
-            # Get all company links
             companies = scraper.get_all_company_links()
             
             if companies:

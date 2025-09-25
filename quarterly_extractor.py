@@ -75,7 +75,6 @@ class QuarterlyExtractor:
             
             time.sleep(1)
             
-            # Find and click login button
             login_button = self.wait.until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, "[type='submit']"))
             )
@@ -87,7 +86,6 @@ class QuarterlyExtractor:
             current_url = self.driver.current_url
             print(f"After login attempt - Current URL: {current_url}")
             
-            # Check if login was successful
             if "login" not in current_url.lower():
                 print("Login successful!")
                 return True
@@ -100,25 +98,20 @@ class QuarterlyExtractor:
             return False
 
     def extract_quarterly_data(self, company_url, company_name):
-        """Extract quarterly results data from a company page for all periods"""
         try:
             print(f"Extracting quarterly data for {company_name}...")
             
-            # Navigate to quarterly results page
             self.driver.get(company_url)
             time.sleep(3)
             
-            # Wait for the quarterly results table to load
             try:
                 self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "#quarters table")))
             except:
                 print(f"Could not find quarterly results table for {company_name}")
                 return []
             
-            # Find the quarterly results table
             table = self.driver.find_element(By.CSS_SELECTOR, "#quarters .responsive-holder table")
             
-            # Extract headers (quarters/periods)
             headers = []
             header_row = table.find_element(By.CSS_SELECTOR, "thead tr")
             header_cells = header_row.find_elements(By.TAG_NAME, "th")
@@ -132,11 +125,9 @@ class QuarterlyExtractor:
                 print(f"No valid headers found for {company_name}")
                 return []
             
-            # Remove the first header (empty column for metric names)
-            period_headers = headers[1:]  # Skip first column which contains metric names
+            period_headers = headers[1:]
             print(f"Found {len(period_headers)} periods for {company_name}: {period_headers[:3]}...")
             
-            # Dictionary to store metric data for each period
             periods_data = {}
             for period in period_headers:
                 periods_data[period] = {
@@ -154,13 +145,11 @@ class QuarterlyExtractor:
                     'EPS in Rs': ''
                 }
             
-            # Extract data rows
             tbody = table.find_element(By.TAG_NAME, "tbody")
             rows = tbody.find_elements(By.TAG_NAME, "tr")
             
             for row in rows:
                 try:
-                    # Skip PDF row and other non-data rows
                     row_html = row.get_attribute('innerHTML')
                     if ('Raw PDF' in row.text or 
                         'icon-file-pdf' in row_html or
@@ -168,30 +157,25 @@ class QuarterlyExtractor:
                         continue
                     
                     cells = row.find_elements(By.TAG_NAME, "td")
-                    if len(cells) < 2:  # Must have at least metric name and one data point
+                    if len(cells) < 2:
                         continue
                     
-                    # Get metric name from first cell
                     metric_cell = cells[0]
                     metric_name = metric_cell.text.strip()
                     
-                    # Skip empty metrics
                     if not metric_name or len(metric_name) < 2:
                         continue
                     
-                    # Clean up metric name (remove + or - buttons)
                     if '+' in metric_name:
                         metric_name = metric_name.replace('+', '').strip()
                     if '-' in metric_name:
                         metric_name = metric_name.replace('-', '').strip()
                     
-                    # Extract data for each period
-                    for i, cell in enumerate(cells[1:]):  # Skip first cell (metric name)
-                        if i < len(period_headers):  # Make sure we have a corresponding period
+                    for i, cell in enumerate(cells[1:]):
+                        if i < len(period_headers):
                             period = period_headers[i]
                             value = cell.text.strip()
                             
-                            # Map metric names to our column names
                             if 'expenses' in metric_name.lower():
                                 periods_data[period]['Expenses'] = value
                             elif 'operating profit' in metric_name.lower() and 'opm' not in metric_name.lower():
@@ -217,11 +201,9 @@ class QuarterlyExtractor:
                     print(f"Error processing row in {company_name}: {e}")
                     continue
             
-            # Convert dictionary to list of records
             all_periods_data = list(periods_data.values())
             print(f"Extracted data for {company_name}: {len(all_periods_data)} periods")
             
-            # Print sample data for verification
             if all_periods_data:
                 print(f"Sample periods: {[d['Period'] for d in all_periods_data[:3]]}")
             
@@ -232,7 +214,6 @@ class QuarterlyExtractor:
             return []
 
     def load_companies_from_csv(self, csv_file="companies_list.csv"):
-        """Load companies from CSV file"""
         try:
             df = pd.read_csv(csv_file)
             companies = []
@@ -249,10 +230,8 @@ class QuarterlyExtractor:
             return []
 
     def extract_all_quarterly_data(self, companies, start_from=0, max_companies=None):
-        """Extract quarterly data for all companies and all their periods"""
         all_quarterly_data = []
         
-        # Limit companies if specified
         if max_companies:
             companies = companies[start_from:start_from + max_companies]
         else:
@@ -278,7 +257,6 @@ class QuarterlyExtractor:
                 else:
                     print(f"✗ No data found for {company['name']}")
                 
-                # Progress update every 50 companies
                 if i % 50 == 0:
                     print(f"\n🎯 PROGRESS UPDATE:")
                     print(f"   Processed: {i}/{total_companies} companies ({(i/total_companies)*100:.1f}%)")
@@ -286,7 +264,6 @@ class QuarterlyExtractor:
                     print(f"   Total data records: {len(all_quarterly_data)}")
                     print(f"   Average records per company: {len(all_quarterly_data)/processed_count if processed_count > 0 else 0:.1f}")
                 
-                # Save intermediate results every 100 companies
                 if i % 100 == 0 and all_quarterly_data:
                     backup_filename = f"quarterly_backup_{current_company_number}.csv"
                     try:
@@ -296,7 +273,6 @@ class QuarterlyExtractor:
                     except Exception as backup_error:
                         print(f"   ⚠️ Backup failed: {backup_error}")
                 
-                # Add delay between companies to avoid overwhelming the server
                 time.sleep(2)
                 
             except Exception as e:
@@ -311,26 +287,22 @@ class QuarterlyExtractor:
         return all_quarterly_data
 
     def save_quarterly_data_to_csv(self, quarterly_data, filename="quarterly_results_full.csv"):
-        """Save quarterly data to CSV with enhanced reporting"""
         try:
             if quarterly_data:
                 df = pd.DataFrame(quarterly_data)
                 df.to_csv(filename, index=False)
                 print(f"Quarterly data saved to {filename}")
                 
-                # Enhanced statistics
                 print(f"\n📊 FINAL STATISTICS:")
                 print(f"Total data records: {len(quarterly_data):,}")
                 print(f"Unique companies: {df['Company Name'].nunique():,}")
                 print(f"Unique metrics: {df['Metric'].nunique()}")
                 print(f"Unique periods: {df['Period'].nunique()}")
                 
-                # Show period range
                 periods = sorted(df['Period'].unique())
                 if len(periods) > 0:
                     print(f"Period range: {periods[0]} to {periods[-1]}")
                 
-                # Show most common metrics
                 print(f"\nTop 10 most common metrics:")
                 top_metrics = df['Metric'].value_counts().head(10)
                 for metric, count in top_metrics.items():
@@ -358,13 +330,11 @@ def main():
     extractor = QuarterlyExtractor()
     
     try:
-        # Login first
         print("=== LOGGING IN ===")
         if not extractor.login(EMAIL, PASSWORD):
             print("Login failed. Exiting...")
             return
         
-        # Load companies from CSV
         print("\n=== LOADING COMPANIES ===")
         companies = extractor.load_companies_from_csv("companies_list.csv")
         
@@ -374,7 +344,6 @@ def main():
         
         print(f"Total companies to process: {len(companies)}")
         
-        # Extract quarterly data for ALL companies
         print("\n=== EXTRACTING QUARTERLY DATA FOR ALL COMPANIES ===")
         print("This will process all 4490+ companies. This may take several hours.")
         print("The script will save progress periodically.")
