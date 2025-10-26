@@ -10,7 +10,7 @@ from selenium.webdriver.chrome.service import Service
 import time
 import os
 import dotenv
-from urllib.parse import urljoin
+
 
 
 dotenv.load_dotenv()
